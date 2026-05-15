@@ -203,7 +203,7 @@ class PararView(discord.ui.View):
     """View com botão de parar o loop de chamar."""
 
     def __init__(self, autor_id: int):
-        super().__init__(timeout=120)  # auto-expira em 2 min
+        super().__init__(timeout=60)  # auto-expira em 1 minuto pq sim
         self.parado = False
         self.autor_id = autor_id
 
@@ -219,7 +219,7 @@ class PararView(discord.ui.View):
             )
         self.parado = True
         button.disabled = True
-        button.label = "✅ Parado"
+        button.label = "Parou"
         await interaction.response.edit_message(view=self)
         self.stop()
 
@@ -243,10 +243,10 @@ async def chamar(ctx: commands.Context, pessoa: discord.Member, *, mensagem: str
     msg = await ctx.send(conteudo, view=view)
 
     # Loop: apaga e reenvia para re-pingar (Discord só pinga em mensagem nova)
-    for _ in range(15):  # máximo de 15 ciclos (~30 s)
+    for _ in range(30):  # máximo de 15 ciclos (~30 s)
         if view.parado or view.is_finished():
             break
-        await asyncio.sleep(2)
+        await asyncio.sleep(0.5)
         if view.parado or view.is_finished():
             break
         try:
