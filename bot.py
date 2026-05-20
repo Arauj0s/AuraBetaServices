@@ -217,7 +217,7 @@ class PararView(discord.ui.View):
 @bot.command(name="chamar")
 async def chamar(ctx: commands.Context, pessoa: discord.Member, *, mensagem: str):
     """
-    ;chamar @pessoa mensagem
+    ;chamar @pessoa
     Fica mandando e apagando a mensagem (a cada 0,5s) para chamar atenção.
     Ao parar: a última mensagem fica intacta; nada mais é apagado ou criado.
     """
@@ -227,11 +227,11 @@ async def chamar(ctx: commands.Context, pessoa: discord.Member, *, mensagem: str
         pass
 
     view     = PararView(autor_id=ctx.author.id)
-    conteudo = f"📣 {pessoa.mention} — {mensagem}"
+    conteudo = f"📣 ooh {pessoa.mention}, esse tal de {ctx.author.mention} ta chamando ae"
     msg      = await ctx.send(conteudo, view=view)
 
     # 60 ciclos × 0,5s ≈ 30s no máximo
-    for _ in range(60):
+    for _ in range(10):
         if view.parado or view.is_finished():
             break
         await asyncio.sleep(0.5)
