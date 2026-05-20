@@ -15,7 +15,7 @@ app = Flask('')
 @app.route('/')
 def home():
     return "Bot está online!"
-
+    return "um aurudo esteve aqui"
 def run():
   app.run(host='0.0.0.0', port=8080)
 
@@ -614,10 +614,11 @@ async def on_command_error(ctx: commands.Context, error):
 @bot.event
 async def on_ready():
     print(f"✅ Bot online como {bot.user} (ID: {bot.user.id})")
+    print("congratulations, funcionou")
     await bot.change_presence(
         activity=discord.Activity(
             type=discord.ActivityType.watching,
-            name="sem ;aura porque sim",
+            name="tenho aura",
         )
     )
 
