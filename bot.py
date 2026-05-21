@@ -123,9 +123,9 @@ _FONT: dict[str, list[str]] = {
     ],
     "C": [
         "01110",
-        "10001",
         "10000",
-        "10001",
+        "10000",
+        "10000",
         "01110"
     ],
     "D": [
@@ -145,7 +145,7 @@ _FONT: dict[str, list[str]] = {
     "F": [
         "11111",
         "10000",
-        "11110",
+        "11100",
         "10000",
         "10000"
     ],
@@ -164,11 +164,11 @@ _FONT: dict[str, list[str]] = {
         "10001"
     ],
     "I": [
-        "11111",
+        "01110",
         "00100",
         "00100",
         "00100",
-        "11111"
+        "01110"
     ],
     "J": [
         "00111",
@@ -389,8 +389,8 @@ def render_texto(text: str, e1: str, e2: str) -> str:
     text = text.upper()
     H, W, GAP = 5, 5, 1
     chars = [c if c in _FONT else " " for c in text]
-    rows  = H + 1                          # +1 para a sombra extravasar
-    cols  = len(chars) * (W + GAP) + 1     # +1 para sombra à direita
+    # rows  = H + 1                          # +1 para a sombra extravasar
+    # cols  = len(chars) * (W + GAP) + 1     # +1 para sombra à direita
 
     grid: list[list[str]] = [["" for _ in range(cols)] for _ in range(rows)]
 
@@ -406,7 +406,7 @@ def render_texto(text: str, e1: str, e2: str) -> str:
                         grid[sr2][sc] = "S"         # sombra
 
     return "\n".join(
-        "".join(e1 if cell == "F" else e2 if cell == "S" else _BLANK for cell in row)
+        "".join(e1 if cell == "F" else _BLANK for cell in row)
         for row in grid
     )
 
@@ -840,12 +840,11 @@ async def on_command_error(ctx: commands.Context, error):
 # ─────────────────────────────────────────
 @bot.event
 async def on_ready():
-    print(f"✅ Bot online como {bot.user} (ID: {bot.user.id})")
     print("congratulations, funcionou")
     await bot.change_presence(
         activity=discord.Activity(
             type=discord.ActivityType.watching,
-            name="tenho aura",
+            name="se mostra e pq funciona",
         )
     )
 
