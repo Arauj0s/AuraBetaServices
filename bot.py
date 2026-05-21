@@ -5,7 +5,7 @@ import os
 import asyncio
 import time
 # _________________________________________________________
-# RAILWAY ESTÁ EM MANUTENÇÃO, TEMPORARIAMENTE USAR RENDER
+# RAILWAY VOLOTOU, MAIS JA FIZ ISSO DAQUI MERMO
 # _________________________________________________________
 from flask import Flask
 from threading import Thread
@@ -107,7 +107,6 @@ def _clear_batata(gid: int, uid: int):
 #  PIXEL FONT 5×5  (uppercase + números + ! ?)
 # ─────────────────────────────────────────
 _FONT: dict[str, list[str]] = {
-PIXEL_FONT = {
     "A": [
         "01110",
         "10001",
@@ -383,18 +382,10 @@ PIXEL_FONT = {
     ]
 }
 
-}
-
-# Braille blank — visualmente invisível mas mantém largura de emoji
 _BLANK = "\u2800"
 
 
 def render_texto(text: str, e1: str, e2: str) -> str:
-    """
-    Renderiza 'text' em pixel-art "3D":
-      e1 = emoji da frente (face principal)
-      e2 = emoji da sombra (deslocado 1px para baixo-direita)
-    """
     text = text.upper()
     H, W, GAP = 5, 5, 1
     chars = [c if c in _FONT else " " for c in text]
