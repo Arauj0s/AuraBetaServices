@@ -103,11 +103,10 @@ def _clear_batata(gid: int, uid: int):
     _batatas.get(gid, {}).pop(uid, None)
 
 
-# ─────────────────────────────────────────
-#  PIXEL FONT 5×5  (uppercase + números + ! ?)
-# ─────────────────────────────────────────
-_FONT: dict[str, list[str]] = {
-_FONT = {
+# _____________________________________________________________________
+#  ESCREVER FONTE 1, 42, 61, 67, 397 AURAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+# _____________________________________________________________________
+PIXEL_FONT = {
     "A": [
         "01110",
         "10001",
