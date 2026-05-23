@@ -19,7 +19,7 @@ def keep_alive():
     Thread(target=run).start()
 
 # ─── Config ────────────────────────────────────────────────────────
-PREFIX    = ";"
+PREFIX       = ";"
 ReisReis_FILE = "ReisReis.json"
 
 intents = discord.Intents.default()
@@ -174,6 +174,8 @@ def _clear_batata(gid: int, uid: int):
 
 # ══════════════════════════════════════════════════════════════════
 #  PIXEL FONT 5×5
+#  FIX: dois passes para evitar que sombra de uma letra cubra a próxima.
+#       Suporte a emoji único (sem sombra).
 # ══════════════════════════════════════════════════════════════════
 _FONT: dict[str, list[str]] = {
     "A":["01110","10001","11111","10001","10001"],
@@ -217,12 +219,13 @@ _FONT: dict[str, list[str]] = {
     " ":["00000","00000","00000","00000","00000"],
 }
 
-_BLANK = "\u2800"   # Braille blank — ocupa espaço mas não aparece
+_BLANK = "\u2800"   # Braille blank — ocupa espaço mas não aparece visualmente
 
-def render_face(text: str, emoji_frente: str, emoji_sombra: str) -> str:
+def render_face(text: str, emoji_frente: str, emoji_sombra: str | None = None) -> str:
     """
-    Renderiza o texto com pixel-art 5×5.
-    emoji_frente = letra principal | emoji_sombra = sombra deslocada (efeito 3D)
+    Renderiza texto em pixel-art 5×5.
+    - Se emoji_sombra for None ou igual a emoji_frente → modo flat (sem efeito 3D).
+    - Fix: dois passes garantem que sombra nunca sobrescreve frente de outra letra.
     """
     text  = text.upper()
     H, W, GAP = 5, 5, 1
@@ -230,8 +233,10 @@ def render_face(text: str, emoji_frente: str, emoji_sombra: str) -> str:
     rows  = H + 1
     cols  = len(chars) * (W + GAP) + 1
 
+    # grade começa vazia
     grid: list[list[str]] = [["" for _ in range(cols)] for _ in range(rows)]
 
+    # ── PASSO 1: marca todas as posições "F" (frente) ──────────────
     for ci, ch in enumerate(chars):
         pat = _FONT[ch]
         cs  = ci * (W + GAP)
@@ -239,15 +244,24 @@ def render_face(text: str, emoji_frente: str, emoji_sombra: str) -> str:
             for c in range(W):
                 if pat[r][c] == "1":
                     grid[r][cs + c] = "F"
-                    sr2, sc = r + 1, cs + c + 1
-                    if sr2 < rows and sc < cols and grid[sr2][sc] != "F":
-                        grid[sr2][sc] = "S"
 
+    # ── PASSO 2: marca sombras APENAS onde não há "F" ──────────────
+    if emoji_sombra and emoji_sombra != emoji_frente:
+        for ci, ch in enumerate(chars):
+            pat = _FONT[ch]
+            cs  = ci * (W + GAP)
+            for r in range(H):
+                for c in range(W):
+                    if pat[r][c] == "1":
+                        sr2, sc = r + 1, cs + c + 1
+                        if sr2 < rows and sc < cols and grid[sr2][sc] == "":
+                            grid[sr2][sc] = "S"
+
+    # ── Renderiza ──────────────────────────────────────────────────
     return "\n".join(
         "".join(
             emoji_frente if cell == "F"
-            else emoji_sombra if cell == "S"
-            else _BLANK
+            else (emoji_sombra if cell == "S" else _BLANK)
             for cell in row
         )
         for row in grid
@@ -255,27 +269,38 @@ def render_face(text: str, emoji_frente: str, emoji_sombra: str) -> str:
 
 
 # ══════════════════════════════════════════════════════════════════
-#  ;chamar  — mensagem e tempo opcionais
+#  ;chamar
+#  NOVO: mensagem de ping fica no canal (pinga o alvo de verdade).
+#        Botão "Parar" é enviado por DM ao autor — só ele vê.
+#        Se DM estiver bloqueada, cai de volta para mensagem normal no canal.
 # ══════════════════════════════════════════════════════════════════
 class PararView(discord.ui.View):
-    def __init__(self, autor_id: int):
+    """Botão de parar enviado por DM ao autor do ;chamar."""
+
+    def __init__(self, autor_id: int, ping_msg_ref: list):
+        # ping_msg_ref é uma lista mutável [msg] para podermos atualizar a ref do loop
         super().__init__(timeout=120)
-        self.parado   = False
-        self.autor_id = autor_id
+        self.parado       = False
+        self.autor_id     = autor_id
+        self.ping_msg_ref = ping_msg_ref
 
     @discord.ui.button(label="⛔ Parar", style=discord.ButtonStyle.danger)
     async def parar(self, interaction: discord.Interaction, button: discord.ui.Button):
-        if (interaction.user.id != self.autor_id
-                and not interaction.user.guild_permissions.administrator):
+        if interaction.user.id != self.autor_id:
             return await interaction.response.send_message(
                 "Só quem usou o comando pode parar.", ephemeral=True)
         self.parado     = True
         button.disabled = True
         button.label    = "✅ Parado"
-        try:
-            await interaction.response.edit_message(view=self)
-        except discord.NotFound:
-            pass
+        await interaction.response.edit_message(view=self)
+
+        # Edita a última mensagem de ping no canal para indicar encerramento
+        ping_msg = self.ping_msg_ref[0] if self.ping_msg_ref else None
+        if ping_msg:
+            try:
+                await ping_msg.edit(content="*(chamado encerrado)*", view=None)
+            except (discord.NotFound, discord.Forbidden):
+                pass
         self.stop()
 
 
@@ -284,13 +309,11 @@ async def chamar(ctx: commands.Context, pessoa: discord.Member, *args):
     """
     ;chamar @pessoa [mensagem] [tempo_em_segundos]
 
-    Exemplos:
-      ;chamar @beta                       → msg genérica, 0.5s
-      ;chamar @beta oi dorminhoco         → msg custom, 0.5s
-      ;chamar @beta acorda 1.5            → msg custom, 1.5s
-      ;chamar @beta 2                     → msg genérica, 2s
+    A mensagem de ping fica no canal (pinga a pessoa de verdade).
+    O botão ⛔ Parar é enviado no privado do autor — só ele vê.
+    Se DM estiver bloqueada, o botão aparece no canal mesmo.
     """
-    # ── Extrai tempo (último arg numérico) e mensagem (resto) ──────
+    # ── Extrai tempo opcional (último arg numérico) ─────────────────
     tempo          = 0.5
     mensagem_parts = list(args)
 
@@ -299,10 +322,10 @@ async def chamar(ctx: commands.Context, pessoa: discord.Member, *args):
             tempo          = float(mensagem_parts[-1])
             mensagem_parts = mensagem_parts[:-1]
         except ValueError:
-            pass   # último arg é texto, não tempo
+            pass
 
-    tempo    = max(0.1, min(tempo, 10.0))          # limita 0.1–10 s
-    max_iter = max(1, int(30 / tempo))             # ~30 s no total
+    tempo    = max(0.1, min(tempo, 10.0))
+    max_iter = max(1, int(30 / tempo))
 
     conteudo = (
         f"📣 {pessoa.mention} — {' '.join(mensagem_parts)}"
@@ -315,46 +338,71 @@ async def chamar(ctx: commands.Context, pessoa: discord.Member, *args):
     except discord.Forbidden:
         pass
 
-    view = PararView(ctx.author.id)
-    msg  = await ctx.send(conteudo, view=view)
+    # Começa o ping no canal
+    ping_msg_ref: list = [None]
+    ping_msg     = await ctx.send(conteudo)
+    ping_msg_ref[0] = ping_msg
 
+    # Tenta mandar o botão por DM
+    view       = PararView(ctx.author.id, ping_msg_ref)
+    dm_enviada = False
+    try:
+        dm_msg = await ctx.author.send(
+            f"🔔 Você está chamando **{pessoa.display_name}**. Clique para parar:",
+            view=view,
+        )
+        dm_enviada = True
+    except discord.Forbidden:
+        # DM bloqueada → botão aparece no canal
+        ctrl_msg = await ctx.send(
+            f"*(botão de controle — só {ctx.author.mention} pode parar)*",
+            view=view,
+        )
+
+    # Loop de ping
     for _ in range(max_iter):
         if view.parado or view.is_finished():
-            break                              # botão pressionado → para aqui,
-            # sem apagar nem criar nada novo
+            break
         await asyncio.sleep(tempo)
         if view.parado or view.is_finished():
             break
         try:
-            await msg.delete()
+            await ping_msg.delete()
         except (discord.NotFound, discord.Forbidden):
             break
-        msg = await ctx.send(conteudo, view=view)
+        ping_msg          = await ctx.send(conteudo)
+        ping_msg_ref[0]   = ping_msg
 
-    # Encerramento por tempo (não por botão)
+    # Encerramento natural (tempo esgotado, botão não foi pressionado)
     if not view.parado:
+        view.stop()
         try:
-            await msg.edit(
+            await ping_msg.edit(
                 content=f"✅ {pessoa.mention} foi chamado por {ctx.author.mention}!",
-                view=None,
             )
         except discord.NotFound:
             pass
+        if dm_enviada:
+            try:
+                await dm_msg.edit(content="✅ Chamado encerrado (tempo esgotado).", view=None)
+            except discord.NotFound:
+                pass
 
 
 # ══════════════════════════════════════════════════════════════════
-#  ;texto  — pixel-art 3D com rotação e modo ephemeral/normal
+#  ;texto — pixel-art 3D com rotação e modo ephemeral/normal
+#  Suporte a emoji único: ;texto CONTEUDO 🗿 [n]
 # ══════════════════════════════════════════════════════════════════
 class TextoView(discord.ui.View):
-    """
-    Botões: ◀  Parar Exibição  ▶
-    ◀ / ▶ alternam entre face A (e1 na frente) e face B (e2 na frente).
-    """
     def __init__(self, autor_id: int, faces: list[str]):
         super().__init__(timeout=300)
         self.autor_id = autor_id
         self.faces    = faces
         self.idx      = 0
+        # Se só tem uma face (emoji único) desabilita as setas
+        if len(faces) == 1:
+            self.children[0].disabled = True   # ◀
+            self.children[2].disabled = True   # ▶
 
     @discord.ui.button(label="◀", style=discord.ButtonStyle.primary)
     async def esquerda(self, interaction: discord.Interaction, _btn):
@@ -382,13 +430,18 @@ class TextoView(discord.ui.View):
 @bot.command(name="texto")
 async def texto_cmd(ctx: commands.Context, *, args: str):
     """
-    ;texto CONTEUDO emoji1,emoji2 [n]
+    ;texto CONTEUDO emoji1[,emoji2] [n]
 
-    Sem 'n' → envia no privado (só você vê).
-    Com 'n' → posta no canal normalmente.
+    Com dois emojis → efeito 3D (sombra).
+    Com um emoji   → flat (sem sombra, sem setas de giro).
+    Sem 'n'        → envia no privado (só você vê).
+    Com 'n'        → posta no canal.
 
-    Exemplo ephemeral : ;texto OI MUNDO 🗿,✂️
-    Exemplo normal    : ;texto OI MUNDO 🗿,✂️ n
+    Exemplos:
+      ;texto OI 🗿,✂️        → 3D no privado
+      ;texto OI 🗿,✂️ n      → 3D no canal
+      ;texto OI 🗿            → flat no privado
+      ;texto OI 🗿 n          → flat no canal
     """
     try:
         await ctx.message.delete()
@@ -402,75 +455,85 @@ async def texto_cmd(ctx: commands.Context, *, args: str):
         normal = True
         parts  = parts[:-1]
 
-    # Acha o par de emojis (contém vírgula)
-    emoji_idx = next(
-        (i for i in range(len(parts) - 1, -1, -1) if "," in parts[i]),
-        None,
-    )
+    if not parts:
+        return await ctx.send("❌ Uso: `;texto CONTEUDO emoji[,emoji2] [n]`", delete_after=7)
+
+    # ── Detecta o token de emoji (último que contém emoji ou vírgula) ──
+    # Estratégia: o último token que NÃO seja puro texto ASCII é o emoji
+    emoji_idx = None
+    for i in range(len(parts) - 1, -1, -1):
+        tok = parts[i]
+        # contém vírgula → par de emojis
+        if "," in tok:
+            emoji_idx = i
+            break
+        # contém caracter não-ASCII ou é emoji Unicode → emoji único
+        if any(ord(c) > 127 for c in tok):
+            emoji_idx = i
+            break
+
     if emoji_idx is None:
         return await ctx.send(
-            "❌ Forneça dois emojis separados por vírgula.\n"
-            "Exemplo: `;texto OI 🗿,✂️`", delete_after=8)
+            "❌ Forneça pelo menos um emoji.\n"
+            "Exemplos: `;texto OI 🗿` ou `;texto OI 🗿,✂️`",
+            delete_after=8)
 
     emoji_str = parts[emoji_idx]
     conteudo  = " ".join(parts[:emoji_idx]).strip()
-    ep        = emoji_str.split(",", 1)
-    e1, e2    = ep[0].strip(), ep[1].strip()
 
     if not conteudo:
         return await ctx.send("❌ Conteúdo vazio.", delete_after=5)
-    if not e1 or not e2:
-        return await ctx.send("❌ Dois emojis necessários.", delete_after=5)
 
-    face_a = render_face(conteudo, e1, e2)
-    face_b = render_face(conteudo, e2, e1)
+    # ── Separa emojis ──────────────────────────────────────────────
+    if "," in emoji_str:
+        ep = emoji_str.split(",", 1)
+        e1, e2 = ep[0].strip(), ep[1].strip()
+        if not e1 or not e2:
+            return await ctx.send("❌ Os dois emojis precisam estar preenchidos.", delete_after=5)
+        face_a = render_face(conteudo, e1, e2)
+        face_b = render_face(conteudo, e2, e1)
+        faces  = [face_a, face_b]
+    else:
+        e1    = emoji_str.strip()
+        faces = [render_face(conteudo, e1)]   # flat, sem sombra
 
-    if len(face_a) > 2000:
+    if any(len(f) > 2000 for f in faces):
         return await ctx.send("❌ Texto muito longo! Use menos caracteres.", delete_after=5)
 
-    view = TextoView(ctx.author.id, [face_a, face_b])
+    view = TextoView(ctx.author.id, faces)
 
     if normal:
-        await ctx.send(face_a, view=view)
+        await ctx.send(faces[0], view=view)
     else:
         try:
-            await ctx.author.send(face_a, view=view)
-            await ctx.send(
-                f"📨 {ctx.author.mention} te mandei no privado!",
-                delete_after=5,
-            )
+            await ctx.author.send(faces[0], view=view)
+            await ctx.send(f"📨 {ctx.author.mention} te mandei no privado!", delete_after=5)
         except discord.Forbidden:
+            hint = f"`n`" 
             await ctx.send(
-                f"❌ Não consigo te enviar DM. "
-                f"Use `;texto {conteudo} {emoji_str} n` para postar no canal.",
-                delete_after=8,
-            )
+                f"❌ Não consigo te enviar DM. Adicione {hint} no final para postar no canal.",
+                delete_after=8)
 
 
 # ══════════════════════════════════════════════════════════════════
-#  ;clone  — mensagem como outra pessoa (webhook) | 1/min
+#  ;clone  — 1/minuto, via webhook
 # ══════════════════════════════════════════════════════════════════
 _clone_cd: dict[int, float] = {}
-
 
 @bot.command(name="clone")
 async def clone_cmd(ctx: commands.Context, *, args: str):
     """
     ;clone MENSAGEM @pessoa
     Envia a mensagem como se fosse a pessoa marcada (1 vez por minuto).
-    Requer permissão de Gerenciar Webhooks no canal.
     """
     uid   = ctx.author.id
     agora = time.time()
-
     restante = 60 - (agora - _clone_cd.get(uid, 0))
     if restante > 0:
         return await ctx.send(
             f"⏳ Aguarde **{int(restante) + 1}s** para usar `;clone` novamente.",
-            delete_after=5,
-        )
+            delete_after=5)
 
-    # Extrai último mention do texto
     mencoes = re.findall(r"<@!?(\d+)>", args)
     if not mencoes:
         return await ctx.send("❌ Uso: `;clone MENSAGEM @pessoa`", delete_after=5)
@@ -488,7 +551,6 @@ async def clone_cmd(ctx: commands.Context, *, args: str):
     except discord.Forbidden:
         pass
 
-    # Pega ou cria webhook
     try:
         webhooks = await ctx.channel.webhooks()
         hook     = next((w for w in webhooks if w.user == bot.user), None)
@@ -499,16 +561,11 @@ async def clone_cmd(ctx: commands.Context, *, args: str):
             "❌ Sem permissão para gerenciar webhooks neste canal.", delete_after=5)
 
     _clone_cd[uid] = agora
-
-    await hook.send(
-        mensagem,
-        username   = alvo.display_name,
-        avatar_url = alvo.display_avatar.url,
-    )
+    await hook.send(mensagem, username=alvo.display_name, avatar_url=alvo.display_avatar.url)
 
 
 # ══════════════════════════════════════════════════════════════════
-#  ;batata
+#  ;batata  — sem args: exibe help com todos os tipos
 # ══════════════════════════════════════════════════════════════════
 class ContestoView(discord.ui.View):
     def __init__(self):
@@ -519,8 +576,7 @@ class ContestoView(discord.ui.View):
         try:
             await interaction.message.delete()
         except (discord.NotFound, discord.Forbidden):
-            await interaction.response.send_message(
-                "Não consegui apagar.", ephemeral=True)
+            await interaction.response.send_message("Não consegui apagar.", ephemeral=True)
 
 
 _BATATA_TIPOS = {
@@ -540,18 +596,53 @@ _BATATA_ANUNCIO = {
     "mogadora": "🥔 **Batata Mogadora** em {alvo}! Toda vez que falar... 👀",
 }
 
+_BATATA_HELP = discord.Embed(
+    title="🥔 Tipos de Batata",
+    description="**Uso:** `;batata <tipo> @pessoa`",
+    color=0xD97706,
+).add_field(
+    name="Batatas com delay de 2s (counteráveis)",
+    value=(
+        "🔇 **normal** — deleta a próxima mensagem do alvo\n"
+        "🫖 **inglesa** — substitui msgs por versão britânica (botão *contesto*)\n"
+        "😤 **raivosa** — alvo tem 10s pra falar ou msgs dele são deletadas\n"
+        "🤫 **sr** — ninguém fala no canal até o alvo falar (ou 20s)"
+    ),
+    inline=False,
+).add_field(
+    name="Counters (cancela batatas ativas)",
+    value=(
+        "🍟 **frita** — cancela: normal, raivosa, sr\n"
+        "🍠 **doce** — cancela: inglesa"
+    ),
+    inline=False,
+).add_field(
+    name="Instantâneas (sem counter)",
+    value=(
+        "🍽️ **gulosa** — igual normal, mas sem counter possível\n"
+        "🥛 **purê** — proíbe CAPS LOCK por 20s\n"
+        "👀 **mogadora** — responde 🅱🅴🆃🅰 toda vez que o alvo falar *(1 por servidor)*"
+    ),
+    inline=False,
+).set_footer(text="Batatas com delay podem ser canceladas durante os 2s de espera.")
+
 
 @bot.command(name="batata")
-async def batata_cmd(ctx: commands.Context, tipo: str, alvo: discord.Member):
+async def batata_cmd(ctx: commands.Context, tipo: str = None, alvo: discord.Member = None):
+    # ── Sem args → help ────────────────────────────────────────────
+    if tipo is None:
+        return await ctx.send(embed=_BATATA_HELP)
+
     tipo = tipo.lower()
     if tipo == "pure":
         tipo = "purê"
 
     if tipo not in (_BATATA_TIPOS - {"pure"}):
         return await ctx.send(
-            "❌ Tipo inválido! Opções:\n"
-            "`normal` `gulosa` `inglesa` `doce` `frita` `purê` `sr` `raivosa` `mogadora`"
-        )
+            "❌ Tipo inválido! Use `;batata` para ver todos os tipos.")
+
+    if alvo is None:
+        return await ctx.send(f"❌ Uso: `;batata {tipo} @pessoa`")
 
     gid = ctx.guild.id
     uid = alvo.id
@@ -563,15 +654,16 @@ async def batata_cmd(ctx: commands.Context, tipo: str, alvo: discord.Member):
 
     anuncio = _BATATA_ANUNCIO[tipo].format(alvo=alvo.mention)
 
-    # ── Batatas contráveis → delay de 2s antes de ativar ──────────
+    # ── Batatas contráveis → delay de 2s ──────────────────────────
     if tipo in _CONTERABLE:
-        await ctx.send(f"{anuncio}\n*⏳ Lançando em 2s…*")
+        ts = int(time.time() + 2)
+        await ctx.send(f"{anuncio}\n*Executando em 2 segundos. <t:{ts}:R>*")
         await asyncio.sleep(2)
         counter     = _COUNTER_DE[tipo]
         b_existente = _get_batata(gid, uid)
         if b_existente and b_existente["type"] == counter:
             return await ctx.send(
-                f"🛡️ A **batata {tipo}** em {alvo.mention} foi bloqueada "
+                f"🛡️ A **batata {tipo}** em {alvo.mention} foi mogada brutalmente "
                 f"pela **batata {counter}**!"
             )
     else:
@@ -579,7 +671,6 @@ async def batata_cmd(ctx: commands.Context, tipo: str, alvo: discord.Member):
 
     expires = time.time() + BATATA_DURACAO
 
-    # ── SR ─────────────────────────────────────────────────────────
     if tipo == "sr":
         _sr[gid] = {"target": uid, "caster": ctx.author.id, "expires": expires}
 
@@ -590,14 +681,12 @@ async def batata_cmd(ctx: commands.Context, tipo: str, alvo: discord.Member):
                 _sr.pop(gid, None)
                 try:
                     await ctx.channel.send(
-                        f"🥔 Tempo esgotado! A **Batata Sr.** de {alvo.mention} acabou.",
-                        delete_after=5,
-                    )
+                        f"Podem falar, {alvo.mention} não é mais protagonista.",
+                        delete_after=5)
                 except Exception:
                     pass
         asyncio.create_task(_sr_expire())
 
-    # ── MOGADORA ───────────────────────────────────────────────────
     elif tipo == "mogadora":
         _mogando[gid] = uid
         _set_batata(gid, uid, "mogadora", ctx.author.id, expires)
@@ -610,13 +699,11 @@ async def batata_cmd(ctx: commands.Context, tipo: str, alvo: discord.Member):
                 try:
                     await ctx.channel.send(
                         f"🥔 A **Batata Mogadora** de {alvo.mention} acabou.",
-                        delete_after=5,
-                    )
+                        delete_after=5)
                 except Exception:
                     pass
         asyncio.create_task(_mog_expire())
 
-    # ── RAIVOSA ────────────────────────────────────────────────────
     elif tipo == "raivosa":
         _set_batata(gid, uid, "raivosa", ctx.author.id, expires)
 
@@ -625,7 +712,6 @@ async def batata_cmd(ctx: commands.Context, tipo: str, alvo: discord.Member):
             _clear_batata(gid, uid)
         asyncio.create_task(_raivosa_expire())
 
-    # ── DEMAIS ─────────────────────────────────────────────────────
     else:
         _set_batata(gid, uid, tipo, ctx.author.id, expires)
 
@@ -651,7 +737,7 @@ async def on_message(message: discord.Message):
     # ── MOGADORA ───────────────────────────────────────────────────
     if _mogando.get(gid) == uid:
         try:
-            await message.channel.send("🅱🅴🆃🅰")
+            await message.channel.send("⚠️ **BETA** DETECTADO!")
         except discord.Forbidden:
             pass
 
@@ -664,9 +750,8 @@ async def on_message(message: discord.Message):
             _sr.pop(gid, None)
             try:
                 await message.channel.send(
-                    f"🥔 {message.author.mention} falou! **Batata Sr.** encerrada.",
-                    delete_after=5,
-                )
+                    f"🥔 {message.author.mention} falou! Pratogonismo acabou para os betas.",
+                    delete_after=5)
             except discord.Forbidden:
                 pass
         else:
@@ -702,10 +787,9 @@ async def on_message(message: discord.Message):
                     pass
                 try:
                     await message.channel.send(
-                        f"🥔 *{message.author.display_name} disse, com muito refinamento britânico:*\n"
+                        f"🥔 *{message.author.mention}* deve falar in English please\n"
                         f"> {conteudo}",
-                        view=ContestoView(),
-                    )
+                        view=ContestoView())
                 except discord.Forbidden:
                     pass
                 return
@@ -718,9 +802,8 @@ async def on_message(message: discord.Message):
                         pass
                     try:
                         await message.channel.send(
-                            f"🥔 {message.author.mention} SEM CAPS LOCK! *(batata purê)*",
-                            delete_after=4,
-                        )
+                            f"🥔 {message.author.mention} não pode gritar (caps lock)",
+                            delete_after=4)
                     except discord.Forbidden:
                         pass
                     return
