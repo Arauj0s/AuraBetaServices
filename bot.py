@@ -382,8 +382,6 @@ PIXEL_FONT = {
     ]
 }
 
-}
-
 # Braille blank — visualmente invisível mas mantém largura de emoji
 _BLANK = "\u2800"
 
