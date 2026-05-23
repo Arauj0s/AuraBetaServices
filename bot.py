@@ -107,7 +107,7 @@ def _clear_batata(gid: int, uid: int):
 #  PIXEL FONT 5×5  (uppercase + números + ! ?)
 # ─────────────────────────────────────────
 _FONT: dict[str, list[str]] = {
-PIXEL_FONT = {
+_FONT = {
     "A": [
         "01110",
         "10001",
