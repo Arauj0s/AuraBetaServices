@@ -20,7 +20,7 @@ def keep_alive():
 
 # ─── Config ────────────────────────────────────────────────────────
 PREFIX    = ";"
-AURA_FILE = "aura.json"
+ReisReis_FILE = "ReisReis.json"
 
 intents = discord.Intents.default()
 intents.message_content = True
@@ -30,58 +30,58 @@ bot = commands.Bot(command_prefix=PREFIX, intents=intents, help_command=None)
 
 
 # ══════════════════════════════════════════════════════════════════
-#  AURA
+#  ReisReis
 # ══════════════════════════════════════════════════════════════════
-def load_aura() -> dict:
-    if os.path.exists(AURA_FILE):
-        with open(AURA_FILE, "r", encoding="utf-8") as f:
+def load_ReisReis() -> dict:
+    if os.path.exists(ReisReis_FILE):
+        with open(ReisReis_FILE, "r", encoding="utf-8") as f:
             return json.load(f)
     return {}
 
-def save_aura(data: dict) -> None:
-    with open(AURA_FILE, "w", encoding="utf-8") as f:
+def save_ReisReis(data: dict) -> None:
+    with open(ReisReis_FILE, "w", encoding="utf-8") as f:
         json.dump(data, f, ensure_ascii=False, indent=2)
 
-def get_aura(user_id: int) -> int:
-    return load_aura().get(str(user_id), 0)
+def get_ReisReis(user_id: int) -> int:
+    return load_ReisReis().get(str(user_id), 0)
 
 def is_admin():
     async def predicate(ctx):
         return ctx.author.guild_permissions.administrator
     return commands.check(predicate)
 
-@bot.group(name="aura", invoke_without_command=True)
-async def aura_group(ctx):
+@bot.group(name="ReisReis", invoke_without_command=True)
+async def ReisReis_group(ctx):
     await ctx.send(embed=discord.Embed(
-        title="✨ Comandos de Aura",
+        title="✨ Comandos de ReisReis",
         description=(
-            "`;aura ver [@pessoa]`\n"
-            "`;aura transferir <qtd> <@pessoa>`\n"
-            "`;aura ranking`\n"
-            "*(Admin)* `;aura add/rem/set <@pessoa> <qtd>`"
+            "`;ReisReis ver [@pessoa]`\n"
+            "`;ReisReis transferir <qtd> <@pessoa>`\n"
+            "`;ReisReis ranking`\n"
+            "*(Admin)* `;ReisReis add/rem/set <@pessoa> <qtd>`"
         ),
         color=0xA78BFA,
     ))
 
-@aura_group.command(name="ver")
-async def aura_ver(ctx, membro: discord.Member = None):
+@ReisReis_group.command(name="ver")
+async def ReisReis_ver(ctx, membro: discord.Member = None):
     m = membro or ctx.author
     e = discord.Embed(
-        description=f"✨ **{m.display_name}** tem **{get_aura(m.id):,}** de aura.",
+        description=f"✨ **{m.display_name}** tem **{get_ReisReis(m.id):,}** de ReisReis.",
         color=0xA78BFA,
     )
     e.set_thumbnail(url=m.display_avatar.url)
     await ctx.send(embed=e)
 
-@aura_group.command(name="transferir")
-async def aura_transferir(ctx, qtd: int, dest: discord.Member):
+@ReisReis_group.command(name="transferir")
+async def ReisReis_transferir(ctx, qtd: int, dest: discord.Member):
     if dest == ctx.author:
         return await ctx.send("❌ Não pode transferir para si mesmo.")
     if qtd <= 0:
         return await ctx.send("❌ Quantidade inválida.")
-    saldo = get_aura(ctx.author.id)
+    saldo = get_ReisReis(ctx.author.id)
     if saldo < qtd:
-        return await ctx.send(f"❌ Saldo insuficiente (**{saldo:,}** aura).")
+        return await ctx.send(f"❌ Saldo insuficiente (**{saldo:,}** ReisReis).")
     msg = await ctx.send(embed=discord.Embed(
         title="💸 Confirmar Transferência",
         description=f"Enviar **{qtd:,}** ✨ para {dest.mention}?\n✅ confirmar  |  ❌ cancelar",
@@ -97,21 +97,21 @@ async def aura_transferir(ctx, qtd: int, dest: discord.Member):
         return await ctx.send("⏰ Tempo esgotado.")
     if str(r.emoji) == "❌":
         return await ctx.send("❌ Cancelado.")
-    data = load_aura()
+    data = load_ReisReis()
     data[str(ctx.author.id)] = saldo - qtd
     data[str(dest.id)] = data.get(str(dest.id), 0) + qtd
-    save_aura(data)
+    save_ReisReis(data)
     await ctx.send(embed=discord.Embed(
         title="✅ Transferência Realizada",
         description=f"{ctx.author.mention} → {dest.mention}: **{qtd:,}** ✨",
         color=0x34D399,
     ))
 
-@aura_group.command(name="ranking")
-async def aura_ranking(ctx):
-    data = load_aura()
+@ReisReis_group.command(name="ranking")
+async def ReisReis_ranking(ctx):
+    data = load_ReisReis()
     if not data:
-        return await ctx.send("Sem dados de aura ainda.")
+        return await ctx.send("Sem dados de ReisReis ainda.")
     top = sorted(data.items(), key=lambda x: x[1], reverse=True)[:10]
     medals = {0:"🥇",1:"🥈",2:"🥉"}
     linhas = []
@@ -119,29 +119,29 @@ async def aura_ranking(ctx):
         m = ctx.guild.get_member(int(uid))
         nome = m.display_name if m else f"ID {uid}"
         linhas.append(f"{medals.get(i,f'**#{i+1}**')} {nome} — **{v:,}** ✨")
-    await ctx.send(embed=discord.Embed(title="🏆 Ranking de Aura",
+    await ctx.send(embed=discord.Embed(title="🏆 Ranking de ReisReis",
         description="\n".join(linhas), color=0xFFD700))
 
-@aura_group.command(name="add")
+@ReisReis_group.command(name="add")
 @is_admin()
-async def aura_add(ctx, m: discord.Member, qtd: int):
-    data = load_aura(); uid = str(m.id)
-    data[uid] = data.get(uid, 0) + qtd; save_aura(data)
+async def ReisReis_add(ctx, m: discord.Member, qtd: int):
+    data = load_ReisReis(); uid = str(m.id)
+    data[uid] = data.get(uid, 0) + qtd; save_ReisReis(data)
     await ctx.send(f"✅ **+{qtd:,}** → {m.mention} | Total: **{data[uid]:,}** ✨")
 
-@aura_group.command(name="rem")
+@ReisReis_group.command(name="rem")
 @is_admin()
-async def aura_rem(ctx, m: discord.Member, qtd: int):
-    data = load_aura(); uid = str(m.id)
-    data[uid] = data.get(uid, 0) - qtd; save_aura(data)
+async def ReisReis_rem(ctx, m: discord.Member, qtd: int):
+    data = load_ReisReis(); uid = str(m.id)
+    data[uid] = data.get(uid, 0) - qtd; save_ReisReis(data)
     await ctx.send(f"✅ **-{qtd:,}** → {m.mention} | Total: **{data[uid]:,}** ✨")
 
-@aura_group.command(name="set")
+@ReisReis_group.command(name="set")
 @is_admin()
-async def aura_set(ctx, m: discord.Member, qtd: int):
-    data = load_aura(); uid = str(m.id)
-    data[uid] = qtd; save_aura(data)
-    await ctx.send(f"✅ Aura de {m.mention} definida para **{qtd:,}** ✨")
+async def ReisReis_set(ctx, m: discord.Member, qtd: int):
+    data = load_ReisReis(); uid = str(m.id)
+    data[uid] = qtd; save_ReisReis(data)
+    await ctx.send(f"✅ ReisReis de {m.mention} definida para **{qtd:,}** ✨")
 
 
 # ══════════════════════════════════════════════════════════════════
@@ -753,7 +753,7 @@ async def on_command_error(ctx: commands.Context, error):
     elif isinstance(error, commands.BadArgument):
         await ctx.send("Erro: Batata")
     elif isinstance(error, commands.CheckFailure):
-        await ctx.send("Erro: Necessita de aura para executar este comando")
+        await ctx.send("Erro: Necessita de muitos reis reis para executar este comando")
     else:
         raise error
 
