@@ -5,7 +5,7 @@ import os
 import asyncio
 import time
 # _________________________________________________________
-# RAILWAY VOLOTOU, MAIS JA FIZ ISSO DAQUI MERMO
+# RAILWAY ESTÁ EM MANUTENÇÃO, TEMPORARIAMENTE USAR RENDER
 # _________________________________________________________
 from flask import Flask
 from threading import Thread
@@ -107,6 +107,7 @@ def _clear_batata(gid: int, uid: int):
 #  PIXEL FONT 5×5  (uppercase + números + ! ?)
 # ─────────────────────────────────────────
 _FONT: dict[str, list[str]] = {
+PIXEL_FONT = {
     "A": [
         "01110",
         "10001",
@@ -123,9 +124,9 @@ _FONT: dict[str, list[str]] = {
     ],
     "C": [
         "01110",
+        "10001",
         "10000",
-        "10000",
-        "10000",
+        "10001",
         "01110"
     ],
     "D": [
@@ -145,7 +146,7 @@ _FONT: dict[str, list[str]] = {
     "F": [
         "11111",
         "10000",
-        "11100",
+        "11110",
         "10000",
         "10000"
     ],
@@ -164,11 +165,11 @@ _FONT: dict[str, list[str]] = {
         "10001"
     ],
     "I": [
-        "01110",
+        "11111",
         "00100",
         "00100",
         "00100",
-        "01110"
+        "11111"
     ],
     "J": [
         "00111",
@@ -382,15 +383,23 @@ _FONT: dict[str, list[str]] = {
     ]
 }
 
+}
+
+# Braille blank — visualmente invisível mas mantém largura de emoji
 _BLANK = "\u2800"
 
 
 def render_texto(text: str, e1: str, e2: str) -> str:
+    """
+    Renderiza 'text' em pixel-art "3D":
+      e1 = emoji da frente (face principal)
+      e2 = emoji da sombra (deslocado 1px para baixo-direita)
+    """
     text = text.upper()
     H, W, GAP = 5, 5, 1
     chars = [c if c in _FONT else " " for c in text]
-    # rows  = H + 1                          # +1 para a sombra extravasar
-    # cols  = len(chars) * (W + GAP) + 1     # +1 para sombra à direita
+    rows  = H + 1                          # +1 para a sombra extravasar
+    cols  = len(chars) * (W + GAP) + 1     # +1 para sombra à direita
 
     grid: list[list[str]] = [["" for _ in range(cols)] for _ in range(rows)]
 
@@ -406,7 +415,7 @@ def render_texto(text: str, e1: str, e2: str) -> str:
                         grid[sr2][sc] = "S"         # sombra
 
     return "\n".join(
-        "".join(e1 if cell == "F" else _BLANK for cell in row)
+        "".join(e1 if cell == "F" else e2 if cell == "S" else _BLANK for cell in row)
         for row in grid
     )
 
@@ -840,11 +849,12 @@ async def on_command_error(ctx: commands.Context, error):
 # ─────────────────────────────────────────
 @bot.event
 async def on_ready():
+    print(f"✅ Bot online como {bot.user} (ID: {bot.user.id})")
     print("congratulations, funcionou")
     await bot.change_presence(
         activity=discord.Activity(
             type=discord.ActivityType.watching,
-            name="se mostra e pq funciona",
+            name="tenho aura",
         )
     )
 
