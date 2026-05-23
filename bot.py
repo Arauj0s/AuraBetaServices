@@ -585,46 +585,47 @@ _BATATA_TIPOS = {
 }
 
 _BATATA_ANUNCIO = {
-    "normal":   "🥔 **Batata Normal** em {alvo}! Próxima mensagem vai sumir.",
-    "gulosa":   "🥔 **Batata Gulosa** em {alvo}! Próxima mensagem vai sumir *(sem counter)*.",
-    "inglesa":  "🥔 **Batata Inglesa** em {alvo}! Mensagens serão substituídas com requinte.",
-    "doce":     "🥔 **Batata Doce** em {alvo}! Protegido contra batata inglesa por 20s.",
-    "frita":    "🥔 **Batata Frita** em {alvo}! Protegido contra normal, raivosa e sr por 20s.",
-    "purê":     "🥔 **Batata Purê** em {alvo}! Sem CAPS LOCK por 20s.",
-    "sr":       "🥔 **Batata Sr.** em {alvo}! Ninguém fala até {alvo} falar (ou 20s).",
-    "raivosa":  "🥔 **Batata Raivosa** em {alvo}! Fale em 10s ou suas mensagens serão deletadas!",
-    "mogadora": "🥔 **Batata Mogadora** em {alvo}! Toda vez que falar... 👀",
+    "normal":   "🥔 **Batata Normal** em {alvo}",
+    "gulosa":   "🥔 **Batata Gulosa** em {alvo}",
+    "inglesa":  "🥔 **English Potato (Batata Inglesa)** em {alvo}",
+    "doce":     "🥔 **Batata Doce** em {alvo}",
+    "frita":    "🥔 **Batata Frita** em {alvo}",
+    "purê":     "🥔 **Purê de Batata** em {alvo}",
+    "sr":       "🥔 **Sr. Batata** em {alvo}",
+    "raivosa":  "🥔 **Batata Raivosa** em {alvo}",
+    "mogadora": "🥔 **Batata Mogadora** em {alvo}",
 }
 
 _BATATA_HELP = discord.Embed(
     title="🥔 Tipos de Batata",
-    description="**Uso:** `;batata <tipo> @pessoa`",
+    description="**Uso:** `;batata [tipo] @[pessoa]`",
     color=0xD97706,
 ).add_field(
-    name="Batatas com delay de 2s (counteráveis)",
+    name="Batatas counteraveis por outras.",
     value=(
-        "🔇 **normal** — deleta a próxima mensagem do alvo\n"
-        "🫖 **inglesa** — substitui msgs por versão britânica (botão *contesto*)\n"
-        "😤 **raivosa** — alvo tem 10s pra falar ou msgs dele são deletadas\n"
-        "🤫 **sr** — ninguém fala no canal até o alvo falar (ou 20s)"
+        "🥔 **Normal** — deleta a próxima mensagem do alvo\n"
+        ":flag_us: **English** — forces the user to speak English (context button)\n"
+        "😡 **Raivosa** — alvo tem 10s pra falar ou msgs dele são deletadas\n"
+        "🎩 **Sr** — ninguém fala no canal até o alvo falar (ou 20s)"
     ),
     inline=False,
 ).add_field(
-    name="Counters (cancela batatas ativas)",
+    name="Batatas que não podem ser counteraveis.",
     value=(
-        "🍟 **frita** — cancela: normal, raivosa, sr\n"
-        "🍠 **doce** — cancela: inglesa"
+        "🍽️ **Gulosa** — 🥔 + no counters = gulosa\n"
+        "🥣 **Purê** — não grita\n"
+        "🗿 **Mogadora** — moga se o beta falar"
     ),
     inline=False,
 ).add_field(
-    name="Instantâneas (sem counter)",
+    name="Counters de Batatas",
     value=(
-        "🍽️ **gulosa** — igual normal, mas sem counter possível\n"
-        "🥛 **purê** — proíbe CAPS LOCK por 20s\n"
-        "👀 **mogadora** — responde 🅱🅴🆃🅰 toda vez que o alvo falar *(1 por servidor)*"
+        "🍟 **Frita** — cancela: normal, raivosa, sr\n"
+        "🍠 **Doce** — cancela: inglesa"
     ),
     inline=False,
-).set_footer(text="Batatas com delay podem ser canceladas durante os 2s de espera.")
+
+).set_footer(text="Servidor Aurudo")
 
 
 @bot.command(name="batata")
