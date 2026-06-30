@@ -1,364 +1,857 @@
 import discord
 from discord.ext import commands
-import os
-import asyncio
-from dotenv import load_dotenv
+import json, os, asyncio, time, re
 
-# Carrega as variáveis de ambiente do arquivo .env
-load_dotenv()
-TOKEN = os.getenv('DISCORD_TOKEN')
+from flask import Flask
+from threading import Thread
+
+# ─── Flask keep-alive ──────────────────────────────────────────────
+app = Flask('')
+
+@app.route('/')
+def home():
+    return "um aurudo esteve aqui"
+
+def run():
+    app.run(host='0.0.0.0', port=8080)
+
+def keep_alive():
+    Thread(target=run).start()
+
+# ─── Config ────────────────────────────────────────────────────────
+PREFIX       = ";"
+ReisReis_FILE = "ReisReis.json"
 
 intents = discord.Intents.default()
 intents.message_content = True
 intents.members = True
 
-bot = commands.Bot(command_prefix=';', intents=intents)
+bot = commands.Bot(command_prefix=PREFIX, intents=intents, help_command=None)
 
-@bot.event
-async def on_ready():
-    print(f'Bot iniciado com sucesso como {bot.user}')
 
-# =====================================================================
-# CHAMAR COM MUITA AURA AEEEE
-# =====================================================================
-@bot.command()
-async def chamar(ctx, membro: discord.Member):
-    if membro == ctx.author:
-        await ctx.send("Tem amigo não é?")
-        return
-    if membro.bot:
-        await ctx.send("Eu sou alérgico a betas, por isso eu não aceito que um betinha me chame.")
-        return
+# ══════════════════════════════════════════════════════════════════
+#  ReisReis
+# ══════════════════════════════════════════════════════════════════
+def load_ReisReis() -> dict:
+    if os.path.exists(ReisReis_FILE):
+        with open(ReisReis_FILE, "r", encoding="utf-8") as f:
+            return json.load(f)
+    return {}
+
+def save_ReisReis(data: dict) -> None:
+    with open(ReisReis_FILE, "w", encoding="utf-8") as f:
+        json.dump(data, f, ensure_ascii=False, indent=2)
+
+def get_ReisReis(user_id: int) -> int:
+    return load_ReisReis().get(str(user_id), 0)
+
+def is_admin():
+    async def predicate(ctx):
+        return ctx.author.guild_permissions.administrator
+    return commands.check(predicate)
+
+@bot.group(name="ReisReis", invoke_without_command=True)
+async def ReisReis_group(ctx):
+    await ctx.send(embed=discord.Embed(
+        title="✨ Comandos de ReisReis",
+        description=(
+            "`;ReisReis ver [@pessoa]`\n"
+            "`;ReisReis transferir <qtd> <@pessoa>`\n"
+            "`;ReisReis ranking`\n"
+            "*(Admin)* `;ReisReis add/rem/set <@pessoa> <qtd>`"
+        ),
+        color=0xA78BFA,
+    ))
+
+@ReisReis_group.command(name="ver")
+async def ReisReis_ver(ctx, membro: discord.Member = None):
+    m = membro or ctx.author
+    e = discord.Embed(
+        description=f"✨ **{m.display_name}** tem **{get_ReisReis(m.id):,}** de ReisReis.",
+        color=0xA78BFA,
+    )
+    e.set_thumbnail(url=m.display_avatar.url)
+    await ctx.send(embed=e)
+
+@ReisReis_group.command(name="transferir")
+async def ReisReis_transferir(ctx, qtd: int, dest: discord.Member):
+    if dest == ctx.author:
+        return await ctx.send("❌ Não pode transferir para si mesmo.")
+    if qtd <= 0:
+        return await ctx.send("❌ Quantidade inválida.")
+    saldo = get_ReisReis(ctx.author.id)
+    if saldo < qtd:
+        return await ctx.send(f"❌ Saldo insuficiente (**{saldo:,}** ReisReis).")
+    msg = await ctx.send(embed=discord.Embed(
+        title="💸 Confirmar Transferência",
+        description=f"Enviar **{qtd:,}** ✨ para {dest.mention}?\n✅ confirmar  |  ❌ cancelar",
+        color=0xFBBF24,
+    ))
+    await msg.add_reaction("✅")
+    await msg.add_reaction("❌")
+    def chk(r, u):
+        return u == ctx.author and str(r.emoji) in ("✅","❌") and r.message.id == msg.id
+    try:
+        r, _ = await bot.wait_for("reaction_add", timeout=30.0, check=chk)
+    except asyncio.TimeoutError:
+        return await ctx.send("⏰ Tempo esgotado.")
+    if str(r.emoji) == "❌":
+        return await ctx.send("❌ Cancelado.")
+    data = load_ReisReis()
+    data[str(ctx.author.id)] = saldo - qtd
+    data[str(dest.id)] = data.get(str(dest.id), 0) + qtd
+    save_ReisReis(data)
+    await ctx.send(embed=discord.Embed(
+        title="✅ Transferência Realizada",
+        description=f"{ctx.author.mention} → {dest.mention}: **{qtd:,}** ✨",
+        color=0x34D399,
+    ))
+
+@ReisReis_group.command(name="ranking")
+async def ReisReis_ranking(ctx):
+    data = load_ReisReis()
+    if not data:
+        return await ctx.send("Sem dados de ReisReis ainda.")
+    top = sorted(data.items(), key=lambda x: x[1], reverse=True)[:10]
+    medals = {0:"🥇",1:"🥈",2:"🥉"}
+    linhas = []
+    for i,(uid,v) in enumerate(top):
+        m = ctx.guild.get_member(int(uid))
+        nome = m.display_name if m else f"ID {uid}"
+        linhas.append(f"{medals.get(i,f'**#{i+1}**')} {nome} — **{v:,}** ✨")
+    await ctx.send(embed=discord.Embed(title="🏆 Ranking de ReisReis",
+        description="\n".join(linhas), color=0xFFD700))
+
+@ReisReis_group.command(name="add")
+@is_admin()
+async def ReisReis_add(ctx, m: discord.Member, qtd: int):
+    data = load_ReisReis(); uid = str(m.id)
+    data[uid] = data.get(uid, 0) + qtd; save_ReisReis(data)
+    await ctx.send(f"✅ **+{qtd:,}** → {m.mention} | Total: **{data[uid]:,}** ✨")
+
+@ReisReis_group.command(name="rem")
+@is_admin()
+async def ReisReis_rem(ctx, m: discord.Member, qtd: int):
+    data = load_ReisReis(); uid = str(m.id)
+    data[uid] = data.get(uid, 0) - qtd; save_ReisReis(data)
+    await ctx.send(f"✅ **-{qtd:,}** → {m.mention} | Total: **{data[uid]:,}** ✨")
+
+@ReisReis_group.command(name="set")
+@is_admin()
+async def ReisReis_set(ctx, m: discord.Member, qtd: int):
+    data = load_ReisReis(); uid = str(m.id)
+    data[uid] = qtd; save_ReisReis(data)
+    await ctx.send(f"✅ ReisReis de {m.mention} definida para **{qtd:,}** ✨")
+
+
+# ══════════════════════════════════════════════════════════════════
+#  BATATA — estado global
+# ══════════════════════════════════════════════════════════════════
+_batatas: dict[int, dict[int, dict]] = {}
+_sr:      dict[int, dict]            = {}
+_mogando: dict[int, int]             = {}
+
+BATATA_DURACAO = 20.0
+_CONTERABLE    = {"normal","sr","raivosa","inglesa"}
+_COUNTER_DE    = {"normal":"frita","sr":"frita","raivosa":"frita","inglesa":"doce"}
+
+def _get_batata(gid: int, uid: int) -> dict | None:
+    b = _batatas.get(gid, {}).get(uid)
+    if b is None: return None
+    if time.time() >= b["expires"]:
+        _batatas[gid].pop(uid, None); return None
+    return b
+
+def _set_batata(gid: int, uid: int, tipo: str, caster_id: int, expires: float, **extra):
+    _batatas.setdefault(gid, {})[uid] = {
+        "type": tipo, "expires": expires,
+        "caster": caster_id, "cast_time": time.time(), **extra,
+    }
+
+def _clear_batata(gid: int, uid: int):
+    _batatas.get(gid, {}).pop(uid, None)
+
+
+# ══════════════════════════════════════════════════════════════════
+#  PIXEL FONT 5×5
+#  FIX: dois passes para evitar que sombra de uma letra cubra a próxima.
+#       Suporte a emoji único (sem sombra).
+# ══════════════════════════════════════════════════════════════════
+_FONT: dict[str, list[str]] = {
+    "A":["01110","10001","11111","10001","10001"],
+    "B":["11110","10001","11110","10001","11110"],
+    "C":["01110","10000","10000","10000","01110"],
+    "D":["11100","10010","10001","10010","11100"],
+    "E":["11111","10000","11110","10000","11111"],
+    "F":["11111","10000","11100","10000","10000"],
+    "G":["01110","10000","10111","10001","01111"],
+    "H":["10001","10001","11111","10001","10001"],
+    "I":["01110","00100","00100","00100","01110"],
+    "J":["00111","00010","00010","10010","01100"],
+    "K":["10010","10100","11000","10100","10010"],
+    "L":["10000","10000","10000","10000","11111"],
+    "M":["10001","11011","10101","10001","10001"],
+    "N":["10001","11001","10101","10011","10001"],
+    "O":["01110","10001","10001","10001","01110"],
+    "P":["11110","10001","11110","10000","10000"],
+    "Q":["01110","10001","10101","10010","01101"],
+    "R":["11110","10001","11110","10010","10001"],
+    "S":["01111","10000","01110","00001","11110"],
+    "T":["11111","00100","00100","00100","00100"],
+    "U":["10001","10001","10001","10001","01110"],
+    "V":["10001","10001","10001","01010","00100"],
+    "W":["10001","10001","10101","11011","10001"],
+    "X":["10001","01010","00100","01010","10001"],
+    "Y":["10001","01010","00100","00100","00100"],
+    "Z":["11111","00010","00100","01000","11111"],
+    "0":["01110","10011","10101","11001","01110"],
+    "1":["00100","01100","00100","00100","11111"],
+    "2":["01110","10001","00110","01000","11111"],
+    "3":["11110","00001","00110","00001","11110"],
+    "4":["00110","01010","10010","11111","00010"],
+    "5":["11111","10000","11110","00001","11110"],
+    "6":["01110","10000","11110","10001","01110"],
+    "7":["11111","00001","00010","00100","01000"],
+    "8":["01110","10001","01110","10001","01110"],
+    "9":["01110","10001","01111","00001","01110"],
+    "!":["00100","00100","00100","00000","00100"],
+    "?":["01110","10001","00110","00000","00100"],
+    " ":["00000","00000","00000","00000","00000"],
+}
+
+_BLANK = "\u2800"   # Braille blank — ocupa espaço mas não aparece visualmente
+
+def render_face(text: str, emoji_frente: str, emoji_sombra: str | None = None) -> str:
+    """
+    Renderiza texto em pixel-art 5×5.
+    - Se emoji_sombra for None ou igual a emoji_frente → modo flat (sem efeito 3D).
+    - Fix: dois passes garantem que sombra nunca sobrescreve frente de outra letra.
+    """
+    text  = text.upper()
+    H, W, GAP = 5, 5, 1
+    chars = [c if c in _FONT else " " for c in text]
+    rows  = H + 1
+    cols  = len(chars) * (W + GAP) + 1
+
+    # grade começa vazia
+    grid: list[list[str]] = [["" for _ in range(cols)] for _ in range(rows)]
+
+    # ── PASSO 1: marca todas as posições "F" (frente) ──────────────
+    for ci, ch in enumerate(chars):
+        pat = _FONT[ch]
+        cs  = ci * (W + GAP)
+        for r in range(H):
+            for c in range(W):
+                if pat[r][c] == "1":
+                    grid[r][cs + c] = "F"
+
+    # ── PASSO 2: marca sombras APENAS onde não há "F" ──────────────
+    if emoji_sombra and emoji_sombra != emoji_frente:
+        for ci, ch in enumerate(chars):
+            pat = _FONT[ch]
+            cs  = ci * (W + GAP)
+            for r in range(H):
+                for c in range(W):
+                    if pat[r][c] == "1":
+                        sr2, sc = r + 1, cs + c + 1
+                        if sr2 < rows and sc < cols and grid[sr2][sc] == "":
+                            grid[sr2][sc] = "S"
+
+    # ── Renderiza ──────────────────────────────────────────────────
+    return "\n".join(
+        "".join(
+            emoji_frente if cell == "F"
+            else (emoji_sombra if cell == "S" else _BLANK)
+            for cell in row
+        )
+        for row in grid
+    )
+
+
+# ══════════════════════════════════════════════════════════════════
+#  ;chamar
+#  NOVO: mensagem de ping fica no canal (pinga o alvo de verdade).
+#        Botão "Parar" é enviado por DM ao autor — só ele vê.
+#        Se DM estiver bloqueada, cai de volta para mensagem normal no canal.
+# ══════════════════════════════════════════════════════════════════
+class PararView(discord.ui.View):
+    """Botão de parar enviado por DM ao autor do ;chamar."""
+
+    def __init__(self, autor_id: int, ping_msg_ref: list):
+        # ping_msg_ref é uma lista mutável [msg] para podermos atualizar a ref do loop
+        super().__init__(timeout=120)
+        self.parado       = False
+        self.autor_id     = autor_id
+        self.ping_msg_ref = ping_msg_ref
+
+    @discord.ui.button(label="⛔ Parar", style=discord.ButtonStyle.danger)
+    async def parar(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if interaction.user.id != self.autor_id:
+            return await interaction.response.send_message(
+                "Só quem usou o comando pode parar.", ephemeral=True)
+        self.parado     = True
+        button.disabled = True
+        button.label    = "✅ Parado"
+        await interaction.response.edit_message(view=self)
+
+        # Edita a última mensagem de ping no canal para indicar encerramento
+        ping_msg = self.ping_msg_ref[0] if self.ping_msg_ref else None
+        if ping_msg:
+            try:
+                await ping_msg.edit(content="*(chamado encerrado)*", view=None)
+            except (discord.NotFound, discord.Forbidden):
+                pass
+        self.stop()
+
+
+@bot.command(name="chamar")
+async def chamar(ctx: commands.Context, pessoa: discord.Member, *args):
+    """
+    ;chamar @pessoa [mensagem] [tempo_em_segundos]
+
+    A mensagem de ping fica no canal (pinga a pessoa de verdade).
+    O botão ⛔ Parar é enviado no privado do autor — só ele vê.
+    Se DM estiver bloqueada, o botão aparece no canal mesmo.
+    """
+    # ── Extrai tempo opcional (último arg numérico) ─────────────────
+    tempo          = 0.5
+    mensagem_parts = list(args)
+
+    if mensagem_parts:
+        try:
+            tempo          = float(mensagem_parts[-1])
+            mensagem_parts = mensagem_parts[:-1]
+        except ValueError:
+            pass
+
+    tempo    = max(0.1, min(tempo, 10.0))
+    max_iter = max(1, int(30 / tempo))
+
+    conteudo = (
+        f"📣 {pessoa.mention} — {' '.join(mensagem_parts)}"
+        if mensagem_parts
+        else f"📣 ooh {pessoa.mention}, esse tal de {ctx.author.mention} ta chamando ae"
+    )
 
     try:
-        mensagem = f"ACORDA CARAI! VOCÊ {membro.mention} ESTÁ PERDENDO AURA DEMAIS. O {ctx.author.mention} Quer jogar, mas você, sim você mesmo está atrasando tudo! Vai lá no **{ctx.guild.name}** e entra call🎧"
-        await membro.send(mensagem)
-        await ctx.send(f"Aquele beta({membro.mention}) foi mogado na DM com sucesso!")
-        
+        await ctx.message.delete()
     except discord.Forbidden:
-        await ctx.send(f"Não consegui enviar DM para {membro.mention}. Ele não abre a porta dele para estranhos, como você, por exemplo.")
+        pass
 
-# ===================================================
-# Craques do futebol
-# =======================================================================
+    # Começa o ping no canal
+    ping_msg_ref: list = [None]
+    ping_msg     = await ctx.send(conteudo)
+    ping_msg_ref[0] = ping_msg
 
-class OpcoesJogadas:
-    # Ataque
-    CORRER = "Continuar Correndo"
-    PASSE_NORMAL = "Passe Normal"
-    PASSE_PROF= "Passe em Profundidade"
-    CHUTE_FORTE = "Chute Forte de Longe"
-    CABECEIO = "Cabeceio Direcionado"
-    
-    # Defesa
-    IR_NA_BOLA = "Ir na Bola (Corpo)"
-    MARCAR_RIVAL = "Marcar Companheiro"
-    CARRINHO = "Dar Carrinho"
-    COBRIR_ALTO = "Cobrir Bola Alta"
-
-    # Goleiro e Chute Final
-    ESQUERDA = "Canto Esquerdo"
-    DIREITA = "Canto Direito"
-    MEIO = "Centro do Gol"
-
-
-class PainelEscolhaEscondida(discord.ui.View):
-    """Gera os botões efêmeros secretos para cada jogador"""
-    def __init__(self, gerenciador, papel, usuario_alvo):
-        super().__init__(timeout=10.0)
-        self.gerenciador = gerenciador
-        self.papel = papel
-        self.usuario_alvo = usuario_alvo
-        self.escolha = None
-        self.configurar_botoes()
-
-    def configurar_botoes(self):
-        if self.papel == "ataque_linha":
-            opcoes = [OpcoesJogadas.CORRER, OpcoesJogadas.PASSE_NORMAL, OpcoesJogadas.PASSE_PROF, OpcoesJogadas.CHUTE_FORTE, OpcoesJogadas.CABECEIO]
-            estilo = discord.ButtonStyle.primary
-        elif self.papel == "defesa_linha":
-            opcoes = [OpcoesJogadas.IR_NA_BOLA, OpcoesJogadas.MARCAR_RIVAL, OpcoesJogadas.CARRINHO, OpcoesJogadas.COBRIR_ALTO]
-            estilo = discord.ButtonStyle.danger
-        elif self.papel == "ataque_goleiro":
-            opcoes = [OpcoesJogadas.ESQUERDA, OpcoesJogadas.DIREITA, OpcoesJogadas.MEIO]
-            estilo = discord.ButtonStyle.success
-        elif self.papel == "defesa_goleiro":
-            opcoes = [OpcoesJogadas.ESQUERDA, OpcoesJogadas.DIREITA, OpcoesJogadas.MEIO]
-            estilo = discord.ButtonStyle.secondary
-
-        for opcao in opcoes:
-            btn = discord.ui.Button(label=opcao, style=estilo, custom_id=opcao)
-            btn.callback = self.processar_clique
-            self.add_item(btn)
-
-    async def processar_clique(self, interaction: discord.Interaction):
-        if interaction.user != self.usuario_alvo:
-            await interaction.response.send_message("Você não tem permissão para usar este painel.", ephemeral=True)
-            return
-            
-        self.escolha = interaction.data['custom_id']
-        for item in self.children:
-            item.disabled = True
-            
-        await interaction.response.edit_message(content=f"Decisão registrada: {self.escolha}. Aguardando os demais...", view=self)
-        await self.gerenciador.computar_voto(self.papel, self.escolha)
-
-    async def on_timeout(self):
-        if not self.escolha:
-            # Seleção automática por W.O de tempo
-            opcoes_padrao = {
-                "ataque_linha": OpcoesJogadas.CORRER,
-                "defesa_linha": OpcoesJogadas.IR_NA_BOLA,
-                "ataque_goleiro": OpcoesJogadas.MEIO,
-                "defesa_goleiro": OpcoesJogadas.MEIO
-            }
-            self.escolha = opcoes_padrao[self.papel]
-            await self.gerenciador.computar_voto(self.papel, f"{self.escolha} (Estourou o Tempo)")
-
-
-class PainelGatilhoPublico(discord.ui.View):
-    """Botoes no chat publico para os jogadores abrirem seus menus privados"""
-    def __init__(self, gerenciador):
-        super().__init__(timeout=60.0)
-        self.gerenciador = gerenciador
-
-    @discord.ui.button(label="Painel de Ataque", style=discord.ButtonStyle.primary)
-    async def abrir_ataque(self, interaction: discord.Interaction, button: discord.ui.Button):
-        if interaction.user != self.gerenciador.atq_linha:
-            await interaction.response.send_message("Você não é o Atacante de linha ativo.", ephemeral=True)
-            return
-        view = PainelEscolhaEscondida(self.gerenciador, "ataque_linha", interaction.user)
-        await interaction.response.send_message("Selecione sua jogada de ataque:", view=view, ephemeral=True)
-
-    @discord.ui.button(label="Painel de Defesa", style=discord.ButtonStyle.danger)
-    async def abrir_defesa(self, interaction: discord.Interaction, button: discord.ui.Button):
-        if interaction.user != self.gerenciador.def_linha:
-            await interaction.response.send_message("Você não é o Defensor de linha ativo.", ephemeral=True)
-            return
-        view = PainelEscolhaEscondida(self.gerenciador, "defesa_linha", interaction.user)
-        await interaction.response.send_message("Selecione sua estratégia de defesa:", view=view, ephemeral=True)
-
-
-class PainelGoleiroPublico(discord.ui.View):
-    """Botoes no chat publico para o duelo final com o goleiro"""
-    def __init__(self, gerenciador):
-        super().__init__(timeout=60.0)
-        self.gerenciador = gerenciador
-
-    @discord.ui.button(label="Definir Direção do Chute", style=discord.ButtonStyle.success)
-    async def mirar_chute(self, interaction: discord.Interaction, button: discord.ui.Button):
-        if interaction.user != self.gerenciador.atq_linha:
-            await interaction.response.send_message("Você não é o chutador.", ephemeral=True)
-            return
-        view = PainelEscolhaEscondida(self.gerenciador, "ataque_goleiro", interaction.user)
-        await interaction.response.send_message("Para qual canto você vai chutar?", view=view, ephemeral=True)
-
-    @discord.ui.button(label="Definir Salto do Goleiro", style=discord.ButtonStyle.secondary)
-    async def saltar_goleiro(self, interaction: discord.Interaction, button: discord.ui.Button):
-        if interaction.user != self.gerenciador.def_goleiro:
-            await interaction.response.send_message("Você não é o Goleiro deste lance.", ephemeral=True)
-            return
-        view = PainelEscolhaEscondida(self.gerenciador, "defesa_goleiro", interaction.user)
-        await interaction.response.send_message("Para qual canto você vai pular?", view=view, ephemeral=True)
-
-
-class PartidaFutebol:
-    """Controlador central de dados da partida 2v2 melhor de 3"""
-    def __init__(self, ctx, t1_linha, t1_goleiro, t2_linha, t2_goleiro):
-        self.ctx = ctx
-        
-        # Equipes
-        self.t1_linha = t1_linha
-        self.t1_goleiro = t1_goleiro
-        self.t2_linha = t2_linha
-        self.t2_goleiro = t2_goleiro
-        
-        # Placar
-        self.gols_t1 = 0
-        self.gols_t2 = 0
-        self.rodada_atual = 1
-        
-        # Definindo posições iniciais (Time 1 começa atacando)
-        self.atq_linha = t1_linha
-        self.atq_goleiro = t1_goleiro
-        self.def_linha = t2_linha
-        self.def_goleiro = t2_goleiro
-        
-        # Armazenamento de turnos
-        self.voto_atq_linha = None
-        self.voto_def_linha = None
-        self.voto_atq_gol = None
-        self.voto_def_gol = None
-        
-        self.msg_painel = None
-
-    async def iniciar(self):
-        await self.ctx.send(
-            f"PARTIDA INICIADA - MELHOR DE 3! Que vença o melhor\n"
-            f"Time 1: Linha {self.t1_linha.mention} | Goleiro {self.t1_goleiro.mention}\n"
-            f"Time 2: Linha {self.t2_linha.mention} | Goleiro {self.t2_goleiro.mention}\n"
-            f"--------------------------------------------------"
+    # Tenta mandar o botão por DM
+    view       = PararView(ctx.author.id, ping_msg_ref)
+    dm_enviada = False
+    try:
+        dm_msg = await ctx.author.send(
+            f"🔔 Você está chamando **{pessoa.display_name}**. Clique para parar:",
+            view=view,
         )
-        await self.executar_rodada()
-
-    async def executar_rodada(self):
-        self.voto_atq_linha = None
-        self.voto_def_linha = None
-        self.voto_atq_gol = None
-        self.voto_def_gol = None
-
-        conteudo = (
-            f"RODADA {self.rodada_atual} de 3\n"
-            f"Placar Atual: Time 1 [{self.gols_t1}] vs [{self.gols_t2}] Time 2\n\n"
-            f"O atacante {self.atq_linha.mention} avança contra o zagueiro {self.def_linha.mention}.\n"
-            f"Jogadores, cliquem nos botões abaixo para abrir suas escolhas efêmeras. Vocês têm 10 segundos!"
+        dm_enviada = True
+    except discord.Forbidden:
+        # DM bloqueada → botão aparece no canal
+        ctrl_msg = await ctx.send(
+            f"*(botão de controle — só {ctx.author.mention} pode parar)*",
+            view=view,
         )
-        view = PainelGatilhoPublico(self)
-        self.msg_painel = await self.ctx.send(content=conteudo, view=view)
 
-    async def computar_voto(self, papel, escolha):
-        if papel == "ataque_linha":
-            self.voto_atq_linha = escolha
-        elif papel == "defesa_linha":
-            self.voto_def_linha = escolha
-        elif papel == "ataque_goleiro":
-            self.voto_atq_gol = escolha
-        elif papel == "defesa_goleiro":
-            self.voto_def_gol = escolha
+    # Loop de ping
+    for _ in range(max_iter):
+        if view.parado or view.is_finished():
+            break
+        await asyncio.sleep(tempo)
+        if view.parado or view.is_finished():
+            break
+        try:
+            await ping_msg.delete()
+        except (discord.NotFound, discord.Forbidden):
+            break
+        ping_msg          = await ctx.send(conteudo)
+        ping_msg_ref[0]   = ping_msg
 
-        # Verifica se a primeira fase (linha) terminou
-        if self.voto_atq_linha and self.voto_def_linha and not self.voto_atq_gol:
-            await self.processar_fase_linha()
-            
-        # Verifica se a segunda fase (goleiro) terminou
-        if self.voto_atq_gol and self.voto_def_gol:
-            await self.processar_fase_goleiro()
-
-    async def processar_fase_linha(self):
-        atq = self.voto_atq_linha.split(" (")[0]
-        deff = self.voto_def_linha.split(" (")[0]
-        
-        resultado_texto = f"Confronto de Linha:\nAtacante escolheu: {atq}\nDefensor escolheu: {deff}\n\n"
-        chute_liberado = False
-
-        # Matrix de Decisão Pura (Sem RNG)
-        if atq == OpcoesJogadas.CHUTE_FORTE:
-            if deff == OpcoesJogadas.IR_NA_BOLA:
-                resultado_texto += "O zagueiro tentou o jogo de corpo, mas o atacante limpou espaço e soltou uma bomba! A bola vai em direção ao gol!"
-                chute_liberado = True
-            elif deff == OpcoesJogadas.CARRINHO:
-                resultado_texto += "FALTA CRUEL! O zagueiro deu um carrinho desproporcional. Cartão amarelo e falta direta frontal contra o goleiro!"
-                chute_liberado = True
-            else:
-                resultado_texto += "A zaga ficou marcando passe e deu espaço. O atacante soltou um chute fortíssimo de fora da área!"
-                chute_liberado = True
-
-        elif atq == OpcoesJogadas.CABECEIO:
-            if deff == OpcoesJogadas.COBRIR_ALTO:
-                resultado_texto += "O zagueiro subiu junto no tempo certo e desviou o cabeceio para escanteio! Chance perdida."
-            else:
-                resultado_texto += "Cruzamento perfeito na área! O atacante subiu sozinho e testou firme para o gol!"
-                chute_liberado = True
-
-        elif atq == OpcoesJogadas.PASSE_NORMAL:
-            if deff == OpcoesJogadas.MARCAR_RIVAL:
-                resultado_texto += "O atacante tentou o passe curto lateral, mas o zagueiro antecipou a jogada de forma perfeita e roubou a bola!"
-            else:
-                resultado_texto += "Passe curto executado com sucesso, o companheiro infiltrou e bateu de primeira na saída do goleiro!"
-                chute_liberado = True
-
-        elif atq == OpcoesJogadas.PASSE_PROF:
-            if deff == OpcoesJogadas.CARRINHO:
-                resultado_texto += "O zagueiro deu o carrinho no vento! A bola passou em profundidade rasgando a zaga e deixando o atacante cara a cara!"
-                chute_liberado = True
-            else:
-                resultado_texto += "O passe em profundidade correu demais no campo molhado e saiu diretamente pela linha de fundo."
-
-        elif atq == OpcoesJogadas.CORRER:
-            if deff == OpcoesJogadas.IR_NA_BOLA:
-                resultado_texto += "O zagueiro usou o jogo de corpo com precisão, desestabilizou o atacante e ficou com a posse de bola."
-            elif deff == OpcoesJogadas.CARRINHO:
-                resultado_texto += "O zagueiro acertou um carrinho limpo na bola e desarmou o contra-ataque!"
-            else:
-                resultado_texto += "O atacante usou a velocidade, deixou o zagueiro para trás e invadiu a grande área de frente pro gol!"
-                chute_liberado = True
-
-        if chute_liberado:
-            await self.msg_painel.edit(content=f"{resultado_texto}\n\n**FASE FINAL: DUELO COM O GOLEIRO!**\nChutador vai chutar, e Goleiro ({self.def_goleiro.mention}) não vai deixar a bola entrar fácil.", view=PainelGoleiroPublico(self))
-        else:
-            await self.msg_painel.edit(content=f"{resultado_texto}\n\nO ataque erra no lance...", view=None)
-            await self.finalizar_rodada(gol=False)
-
-    async def processar_fase_goleiro(self):
-        canto_chute = self.voto_atq_gol.split(" (")[0]
-        canto_goleiro = self.voto_def_gol.split(" (")[0]
-        
-        resultado_texto = f"Faz ou não faz? **\nChutador chuta no(a) {canto_chute}**, e **\nGoleiro pula para {canto_goleiro}**\n\n"
-        
-        if canto_chute == canto_goleiro:
-            resultado_texto += f"É GOL, É GOL? É NADA! QUE DEFESA DO GOLEIRO! Leu a jogada perfeitamente e pula para {canto_goleiro} e salva o time."
-            gol = False
-        else:
-            resultado_texto += "É GOL, É GOL? É GOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOL! QUE JOGADA DO TIME! O goleiro não teve chance e falhou no lance"
-            gol = True
-            
-        await self.msg_painel.edit(content=resultado_texto, view=None)
-        await self.finalizar_rodada(gol=gol)
-
-    async def finalizar_rodada(self, gol):
-        if gol:
-            if self.atq_linha == self.t1_linha:
-                self.gols_t1 += 1
-            else:
-                self.gols_t2 += 1
-
-        await asyncio.sleep(4) # Janela de tempo para leitura do resultado
-        
-        self.rodada_atual += 1
-        
-        # Alterna os papéis para o próximo lance (Quem defendia agora ataca)
-        if self.rodada_atual <= 3:
-            if self.atq_linha == self.t1_linha:
-                self.atq_linha, self.atq_goleiro = self.t2_linha, self.t2_goleiro
-                self.def_linha, self.def_goleiro = self.t1_linha, self.t1_goleiro
-            else:
-                self.atq_linha, self.atq_goleiro = self.t1_linha, self.t1_goleiro
-                self.def_linha, self.def_goleiro = self.t2_linha, self.t2_goleiro
-                
-            await self.executar_rodada()
-        else:
-            await self.encerrar_partida()
-
-    async def encerrar_partida(self):
-        vencedor = ""
-        if self.gols_t1 > self.gols_t2:
-            vencedor = f"FIM DE JOGO! {self.gols_t1} a {self.gols_t2} pro Time 1"
-        elif self.gols_t2 > self.gols_t1:
-            vencedor = f"FIM DE JOGO! {self.gols_t2} a {self.gols_t1} pro Time 2"
-        else:
-            vencedor = f"FIM DE JOGO! {self.gols_t1} a {self.gols_t2}, um empate entre times"
-
-        await self.ctx.send(f"==================================\n{vencedor}\n==================================")
+    # Encerramento natural (tempo esgotado, botão não foi pressionado)
+    if not view.parado:
+        view.stop()
+        try:
+            await ping_msg.edit(
+                content=f"✅ {pessoa.mention} foi chamado por {ctx.author.mention}!",
+            )
+        except discord.NotFound:
+            pass
+        if dm_enviada:
+            try:
+                await dm_msg.edit(content="✅ Chamado encerrado (tempo esgotado).", view=None)
+            except discord.NotFound:
+                pass
 
 
-@bot.command()
-async def jogar(ctx, t1_goleiro: discord.Member, t2_linha: discord.Member, t2_goleiro: discord.Member):
-    """Inicia a partida de futebol no formato 2v2 (Melhor de 3)"""
-    # uso vira jogador de linha do time 1
-    t1_linha = ctx.author
-    
-    todos_jogadores = [t1_linha, t1_goleiro, t2_linha, t2_goleiro]
-    if len(set(todos_jogadores)) < 4:
-        await ctx.send("Erro: Para uma partida de 2v2 realista, você precisa convocar 4 usuários distintos.")
+# ══════════════════════════════════════════════════════════════════
+#  ;texto — pixel-art 3D com rotação e modo ephemeral/normal
+#  Suporte a emoji único: ;texto CONTEUDO 🗿 [n]
+# ══════════════════════════════════════════════════════════════════
+class TextoView(discord.ui.View):
+    def __init__(self, autor_id: int, faces: list[str]):
+        super().__init__(timeout=300)
+        self.autor_id = autor_id
+        self.faces    = faces
+        self.idx      = 0
+        # Se só tem uma face (emoji único) desabilita as setas
+        if len(faces) == 1:
+            self.children[0].disabled = True   # ◀
+            self.children[2].disabled = True   # ▶
+
+    @discord.ui.button(label="◀", style=discord.ButtonStyle.primary)
+    async def esquerda(self, interaction: discord.Interaction, _btn):
+        self.idx = (self.idx - 1) % len(self.faces)
+        await interaction.response.edit_message(content=self.faces[self.idx], view=self)
+
+    @discord.ui.button(label="⏹ Parar Exibição", style=discord.ButtonStyle.danger)
+    async def parar_exibicao(self, interaction: discord.Interaction, _btn):
+        if (interaction.user.id != self.autor_id
+                and not interaction.user.guild_permissions.administrator):
+            return await interaction.response.send_message(
+                "Só quem usou pode parar.", ephemeral=True)
+        for child in self.children:
+            child.disabled = True
+        _btn.label = "✅ Encerrado"
+        await interaction.response.edit_message(content="*(exibição encerrada)*", view=self)
+        self.stop()
+
+    @discord.ui.button(label="▶", style=discord.ButtonStyle.primary)
+    async def direita(self, interaction: discord.Interaction, _btn):
+        self.idx = (self.idx + 1) % len(self.faces)
+        await interaction.response.edit_message(content=self.faces[self.idx], view=self)
+
+
+@bot.command(name="texto")
+async def texto_cmd(ctx: commands.Context, *, args: str):
+    """
+    ;texto CONTEUDO emoji1[,emoji2] [n]
+
+    Com dois emojis → efeito 3D (sombra).
+    Com um emoji   → flat (sem sombra, sem setas de giro).
+    Sem 'n'        → envia no privado (só você vê).
+    Com 'n'        → posta no canal.
+
+    Exemplos:
+      ;texto OI 🗿,✂️        → 3D no privado
+      ;texto OI 🗿,✂️ n      → 3D no canal
+      ;texto OI 🗿            → flat no privado
+      ;texto OI 🗿 n          → flat no canal
+    """
+    try:
+        await ctx.message.delete()
+    except discord.Forbidden:
+        pass
+
+    parts  = args.split()
+    normal = False
+
+    if parts and parts[-1].lower() == "n":
+        normal = True
+        parts  = parts[:-1]
+
+    if not parts:
+        return await ctx.send("❌ Uso: `;texto CONTEUDO emoji[,emoji2] [n]`", delete_after=7)
+
+    # ── Detecta o token de emoji (último que contém emoji ou vírgula) ──
+    # Estratégia: o último token que NÃO seja puro texto ASCII é o emoji
+    emoji_idx = None
+    for i in range(len(parts) - 1, -1, -1):
+        tok = parts[i]
+        # contém vírgula → par de emojis
+        if "," in tok:
+            emoji_idx = i
+            break
+        # contém caracter não-ASCII ou é emoji Unicode → emoji único
+        if any(ord(c) > 127 for c in tok):
+            emoji_idx = i
+            break
+
+    if emoji_idx is None:
+        return await ctx.send(
+            "❌ Forneça pelo menos um emoji.\n"
+            "Exemplos: `;texto OI 🗿` ou `;texto OI 🗿,✂️`",
+            delete_after=8)
+
+    emoji_str = parts[emoji_idx]
+    conteudo  = " ".join(parts[:emoji_idx]).strip()
+
+    if not conteudo:
+        return await ctx.send("❌ Conteúdo vazio.", delete_after=5)
+
+    # ── Separa emojis ──────────────────────────────────────────────
+    if "," in emoji_str:
+        ep = emoji_str.split(",", 1)
+        e1, e2 = ep[0].strip(), ep[1].strip()
+        if not e1 or not e2:
+            return await ctx.send("❌ Os dois emojis precisam estar preenchidos.", delete_after=5)
+        face_a = render_face(conteudo, e1, e2)
+        face_b = render_face(conteudo, e2, e1)
+        faces  = [face_a, face_b]
+    else:
+        e1    = emoji_str.strip()
+        faces = [render_face(conteudo, e1)]   # flat, sem sombra
+
+    if any(len(f) > 2000 for f in faces):
+        return await ctx.send("❌ Texto muito longo! Use menos caracteres.", delete_after=5)
+
+    view = TextoView(ctx.author.id, faces)
+
+    if normal:
+        await ctx.send(faces[0], view=view)
+    else:
+        try:
+            await ctx.author.send(faces[0], view=view)
+            await ctx.send(f"📨 {ctx.author.mention} te mandei no privado!", delete_after=5)
+        except discord.Forbidden:
+            hint = f"`n`" 
+            await ctx.send(
+                f"❌ Não consigo te enviar DM. Adicione {hint} no final para postar no canal.",
+                delete_after=8)
+
+
+# ══════════════════════════════════════════════════════════════════
+#  ;clone  — 1/minuto, via webhook
+# ══════════════════════════════════════════════════════════════════
+_clone_cd: dict[int, float] = {}
+
+@bot.command(name="clone")
+async def clone_cmd(ctx: commands.Context, *, args: str):
+    """
+    ;clone MENSAGEM @pessoa
+    Envia a mensagem como se fosse a pessoa marcada (1 vez por minuto).
+    """
+    uid   = ctx.author.id
+    agora = time.time()
+    restante = 60 - (agora - _clone_cd.get(uid, 0))
+    if restante > 0:
+        return await ctx.send(
+            f"⏳ Aguarde **{int(restante) + 1}s** para usar `;clone` novamente.",
+            delete_after=5)
+
+    mencoes = re.findall(r"<@!?(\d+)>", args)
+    if not mencoes:
+        return await ctx.send("❌ Uso: `;clone MENSAGEM @pessoa`", delete_after=5)
+
+    alvo = ctx.guild.get_member(int(mencoes[-1]))
+    if not alvo:
+        return await ctx.send("❌ Membro não encontrado.", delete_after=5)
+
+    mensagem = re.sub(r"<@!?\d+>", "", args).strip()
+    if not mensagem:
+        return await ctx.send("❌ Mensagem vazia.", delete_after=5)
+
+    try:
+        await ctx.message.delete()
+    except discord.Forbidden:
+        pass
+
+    try:
+        webhooks = await ctx.channel.webhooks()
+        hook     = next((w for w in webhooks if w.user == bot.user), None)
+        if not hook:
+            hook = await ctx.channel.create_webhook(name="CloneBot 🥔")
+    except discord.Forbidden:
+        return await ctx.send(
+            "❌ Sem permissão para gerenciar webhooks neste canal.", delete_after=5)
+
+    _clone_cd[uid] = agora
+    await hook.send(mensagem, username=alvo.display_name, avatar_url=alvo.display_avatar.url)
+
+
+# ══════════════════════════════════════════════════════════════════
+#  ;batata  — sem args: exibe help com todos os tipos
+# ══════════════════════════════════════════════════════════════════
+class ContestoView(discord.ui.View):
+    def __init__(self):
+        super().__init__(timeout=120)
+
+    @discord.ui.button(label="Contesto", style=discord.ButtonStyle.secondary, emoji="🥔")
+    async def contesto(self, interaction: discord.Interaction, _btn):
+        try:
+            await interaction.message.delete()
+        except (discord.NotFound, discord.Forbidden):
+            await interaction.response.send_message("Não consegui apagar.", ephemeral=True)
+
+
+_BATATA_TIPOS = {
+    "normal","gulosa","inglesa","doce",
+    "frita","purê","pure","sr","raivosa","mogadora",
+}
+
+_BATATA_ANUNCIO = {
+    "normal":   "🥔 **Batata Normal** em {alvo}",
+    "gulosa":   "🥔 **Batata Gulosa** em {alvo}",
+    "inglesa":  "🥔 **English Potato (Batata Inglesa)** em {alvo}",
+    "doce":     "🥔 **Batata Doce** em {alvo}",
+    "frita":    "🥔 **Batata Frita** em {alvo}",
+    "purê":     "🥔 **Purê de Batata** em {alvo}",
+    "sr":       "🥔 **Sr. Batata** em {alvo}",
+    "raivosa":  "🥔 **Batata Raivosa** em {alvo}",
+    "mogadora": "🥔 **Batata Mogadora** em {alvo}",
+}
+
+_BATATA_HELP = discord.Embed(
+    title="🥔 Tipos de Batata",
+    description="**Uso:** `;batata [tipo] @[pessoa]`",
+    color=0xD97706,
+).add_field(
+    name="Batatas counteraveis por outras.",
+    value=(
+        "🥔 **Normal** — deleta a próxima mensagem do alvo\n"
+        ":flag_us: **English** — forces the user to speak English (context button)\n"
+        "😡 **Raivosa** — alvo tem 10s pra falar ou msgs dele são deletadas\n"
+        "🎩 **Sr** — ninguém fala no canal até o alvo falar (ou 20s)"
+    ),
+    inline=False,
+).add_field(
+    name="Batatas que não podem ser counteraveis.",
+    value=(
+        "🍽️ **Gulosa** — 🥔 + no counters = gulosa\n"
+        "🥣 **Purê** — não grita\n"
+        "🗿 **Mogadora** — moga se o beta falar"
+    ),
+    inline=False,
+).add_field(
+    name="Counters de Batatas",
+    value=(
+        "🍟 **Frita** — cancela: normal, raivosa, sr\n"
+        "🍠 **Doce** — cancela: inglesa"
+    ),
+    inline=False,
+
+).set_footer(text="Servidor Aurudo")
+
+
+@bot.command(name="batata")
+async def batata_cmd(ctx: commands.Context, tipo: str = None, alvo: discord.Member = None):
+    # ── Sem args → help ────────────────────────────────────────────
+    if tipo is None:
+        return await ctx.send(embed=_BATATA_HELP)
+
+    tipo = tipo.lower()
+    if tipo == "pure":
+        tipo = "purê"
+
+    if tipo not in (_BATATA_TIPOS - {"pure"}):
+        return await ctx.send(
+            "❌ Tipo inválido! Use `;batata` para ver todos os tipos.")
+
+    if alvo is None:
+        return await ctx.send(f"❌ Uso: `;batata {tipo} @pessoa`")
+
+    gid = ctx.guild.id
+    uid = alvo.id
+
+    if tipo == "mogadora" and gid in _mogando:
+        mogado = ctx.guild.get_member(_mogando[gid])
+        nome   = mogado.mention if mogado else "alguém"
+        return await ctx.send(f"🥔 Já tem uma batata mogando {nome} neste servidor!")
+
+    anuncio = _BATATA_ANUNCIO[tipo].format(alvo=alvo.mention)
+
+    # ── Batatas contráveis → delay de 2s ──────────────────────────
+    if tipo in _CONTERABLE:
+        ts = int(time.time() + 2)
+        await ctx.send(f"{anuncio}\n*Executando em 2 segundos. <t:{ts}:R>*")
+        await asyncio.sleep(2)
+        counter     = _COUNTER_DE[tipo]
+        b_existente = _get_batata(gid, uid)
+        if b_existente and b_existente["type"] == counter:
+            return await ctx.send(
+                f"🛡️ A **batata {tipo}** em {alvo.mention} foi mogada brutalmente "
+                f"pela **batata {counter}**!"
+            )
+    else:
+        await ctx.send(anuncio)
+
+    expires = time.time() + BATATA_DURACAO
+
+    if tipo == "sr":
+        _sr[gid] = {"target": uid, "caster": ctx.author.id, "expires": expires}
+
+        async def _sr_expire():
+            await asyncio.sleep(BATATA_DURACAO)
+            s = _sr.get(gid)
+            if s and s["target"] == uid:
+                _sr.pop(gid, None)
+                try:
+                    await ctx.channel.send(
+                        f"Podem falar, {alvo.mention} não é mais protagonista.",
+                        delete_after=5)
+                except Exception:
+                    pass
+        asyncio.create_task(_sr_expire())
+
+    elif tipo == "mogadora":
+        _mogando[gid] = uid
+        _set_batata(gid, uid, "mogadora", ctx.author.id, expires)
+
+        async def _mog_expire():
+            await asyncio.sleep(BATATA_DURACAO)
+            if _mogando.get(gid) == uid:
+                _mogando.pop(gid, None)
+                _clear_batata(gid, uid)
+                try:
+                    await ctx.channel.send(
+                        f"🥔 A **Batata Mogadora** de {alvo.mention} acabou.",
+                        delete_after=5)
+                except Exception:
+                    pass
+        asyncio.create_task(_mog_expire())
+
+    elif tipo == "raivosa":
+        _set_batata(gid, uid, "raivosa", ctx.author.id, expires)
+
+        async def _raivosa_expire():
+            await asyncio.sleep(BATATA_DURACAO)
+            _clear_batata(gid, uid)
+        asyncio.create_task(_raivosa_expire())
+
+    else:
+        _set_batata(gid, uid, tipo, ctx.author.id, expires)
+
+        async def _expire():
+            await asyncio.sleep(BATATA_DURACAO)
+            _clear_batata(gid, uid)
+        asyncio.create_task(_expire())
+
+
+# ══════════════════════════════════════════════════════════════════
+#  on_message — lógica das batatas
+# ══════════════════════════════════════════════════════════════════
+@bot.event
+async def on_message(message: discord.Message):
+    if message.author.bot or not message.guild:
+        await bot.process_commands(message)
         return
 
-    for jogador in todos_jogadores:
-        if jogador.bot:
-            await ctx.send("Bots não fazem gols, igual você, um beta mogado...")
+    gid    = message.guild.id
+    uid    = message.author.id
+    is_cmd = message.content.startswith(PREFIX)
+
+    # ── MOGADORA ───────────────────────────────────────────────────
+    if _mogando.get(gid) == uid:
+        try:
+            await message.channel.send("⚠️ **BETA** DETECTADO!")
+        except discord.Forbidden:
+            pass
+
+    # ── SR ─────────────────────────────────────────────────────────
+    sr = _sr.get(gid)
+    if sr:
+        if time.time() >= sr["expires"]:
+            _sr.pop(gid, None)
+        elif uid == sr["target"]:
+            _sr.pop(gid, None)
+            try:
+                await message.channel.send(
+                    f"🥔 {message.author.mention} falou! Pratogonismo acabou para os betas.",
+                    delete_after=5)
+            except discord.Forbidden:
+                pass
+        else:
+            try:
+                await message.delete()
+            except (discord.Forbidden, discord.NotFound):
+                pass
+            if is_cmd:
+                await bot.process_commands(message)
             return
 
-    partida = PartidaFutebol(ctx, t1_linha, t1_goleiro, t2_linha, t2_goleiro)
-    await partida.iniciar()
+    # ── OUTRAS BATATAS ─────────────────────────────────────────────
+    if not is_cmd:
+        b = _get_batata(gid, uid)
+        if b:
+            tipo = b["type"]
 
-# Token safe
-bot.run(TOKEN)
+            if tipo in ("normal", "gulosa"):
+                if not b.get("first_deleted"):
+                    b["first_deleted"] = True
+                    try:
+                        await message.delete()
+                    except (discord.Forbidden, discord.NotFound):
+                        pass
+                    _clear_batata(gid, uid)
+                    return
+
+            elif tipo == "inglesa":
+                conteudo = message.content
+                try:
+                    await message.delete()
+                except (discord.Forbidden, discord.NotFound):
+                    pass
+                try:
+                    await message.channel.send(
+                        f"🥔 *{message.author.mention}* deve falar in English please\n"
+                        f"> {conteudo}",
+                        view=ContestoView())
+                except discord.Forbidden:
+                    pass
+                return
+
+            elif tipo == "purê":
+                if any(c.isupper() for c in message.content):
+                    try:
+                        await message.delete()
+                    except (discord.Forbidden, discord.NotFound):
+                        pass
+                    try:
+                        await message.channel.send(
+                            f"🥔 {message.author.mention} não pode gritar (caps lock)",
+                            delete_after=4)
+                    except discord.Forbidden:
+                        pass
+                    return
+
+            elif tipo == "raivosa":
+                deadline = b["cast_time"] + 10.0
+                if not b.get("spoke"):
+                    if time.time() <= deadline:
+                        b["spoke"] = True
+                        _clear_batata(gid, uid)
+                    else:
+                        try:
+                            await message.delete()
+                        except (discord.Forbidden, discord.NotFound):
+                            pass
+                        return
+
+    await bot.process_commands(message)
+
+
+# ══════════════════════════════════════════════════════════════════
+#  ERROS GLOBAIS
+# ══════════════════════════════════════════════════════════════════
+@bot.event
+async def on_command_error(ctx: commands.Context, error):
+    if isinstance(error, commands.MissingRequiredArgument):
+        await ctx.send(f"Erro: faltou um tal de `{error.param.name}`")
+    elif isinstance(error, commands.MemberNotFound):
+        await ctx.send("Erro: N/H o betinha marcado")
+    elif isinstance(error, commands.BadArgument):
+        await ctx.send("Erro: Batata")
+    elif isinstance(error, commands.CheckFailure):
+        await ctx.send("Erro: Necessita de muitos reis reis para executar este comando")
+    else:
+        raise error
+
+
+# ══════════════════════════════════════════════════════════════════
+#  START
+# ══════════════════════════════════════════════════════════════════
+@bot.event
+async def on_ready():
+    print("congratulations, funcionou")
+    await bot.change_presence(activity=discord.Activity(
+        type=discord.ActivityType.watching,
+        name="Bot Aurudo",
+    ))
+
+keep_alive()
+bot.run(os.environ["DISCORD_TOKEN"])
